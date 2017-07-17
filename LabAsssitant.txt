@@ -1,0 +1,140 @@
+const AWS = require('aws-sdk');
+
+const docClient = new AWS.DynamoDB.DocumentClient({region:'us-east-1'});
+
+var ses = new AWS.SES({region: 'us-east-1'});
+var queryResponse;
+
+     
+
+// Close dialog with the customer
+function 
+
+close(sessionAttributes, fulfillmentState, message) 
+{
+    return 
+{
+        sessionAttributes,
+        dialogAction: 
+{
+            type: 'Close',
+            fulfillmentState,
+            message,
+        
+},
+    
+};
+
+}
+
+
+function elicitSlot(sessionAttributes, intentName, slots, slotToElicit, message, responseCard) 
+{
+	
+return 
+{
+		sessionAttributes,
+		dialogAction: 
+{
+			type: 'ElicitSlot',
+			intentName,
+			slots,
+			slotToElicit,
+			message,
+			responseCard,
+		
+},
+	
+};
+
+} 
+
+
+// --------------- Events -----------------------
+ 
+
+
+function dispatch(intentRequest, callback) 
+
+{
+    console.log('request received for userId=${intentRequest.userId}, intentName=${intentRequest.currentIntent.intentName}');
+    
+const sessionAttributes = intentRequest.sessionAttributes;
+    
+const slots = intentRequest.currentIntent.slots;
+    
+const inpQuery = slots.query;
+
+    
+
+var params = 
+        
+{
+            
+TableName : "AboutUs",
+            KeyConditionExpression: "#yr = :yyyy",
+            
+ExpressionAttributeNames:
+            
+{
+                "#yr": "attribute"
+            },
+            
+ExpressionAttributeValues: 
+            {
+                ":yyyy":inpQuery
+            }
+        };
+
+    
+docClient.query(params, function(err, data) 
+    
+{
+        
+if (err)
+            
+console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
+        
+else
+        
+{
+            console.log("Query succeeded.");
+            
+data.Items.forEach(function(item) 
+            
+{
+                
+queryResponse = item.value;
+                
+console.log(" -", item.attribute + ": " + item.value);
+            
+});
+        
+}
+    
+        
+callback(close(sessionAttributes, 'Fulfilled',
+        {'contentType': 'PlainText', 'content': queryResponse}));
+    })
+    
+} 
+
+
+// --------------- Main handler -----------------------
+ 
+// Route the incoming request based on intent.
+// The JSON body of the request is provided in the event slot.
+exports.handler = (event, context, callback) => {
+    try 
+{
+        
+dispatch(event,
+            (response) => {
+                callback(null, response);
+            });
+    } 
+catch (err) 
+{
+        callback(err);
+    }
+};
