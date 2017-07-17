@@ -1,0 +1,196 @@
+'use strict';
+var AWS = require('aws-sdk');  
+AWS.config.region = 'us-east-1';  
+var ses = new AWS.SES({region: 'us-east-1'});
+const docClient = new AWS.DynamoDB.DocumentClient({region:'us-east-1'});
+var sessionOTP;
+var recCount=0;
+    
+function buildMessage(messageContent) {
+    return {
+		contentType: 'PlainText',
+		content: messageContent,
+    };
+}
+     
+// Close dialog with the customer, reporting fulfillmentState of Failed or Fulfilled ("Thanks, your pizza will arrive in 20 minutes")
+function close(sessionAttributes, fulfillmentState, message) {
+    return {
+        sessionAttributes,
+        dialogAction: {
+            type: 'Close',
+            fulfillmentState,
+            message,
+        },
+    };
+}
+
+function elicitSlot(sessionAttributes, intentName, slots, slotToElicit, message, responseCard) {
+	return {
+		sessionAttributes,
+		dialogAction: {
+			type: 'ElicitSlot',
+			intentName,
+			slots,
+			slotToElicit,
+			message,
+			responseCard,
+		},
+	};
+} 
+
+function sendEmail(otpToSend)
+{
+    
+    var eParams = 
+{
+    Destination: 
+    {
+        ToAddresses: ["vinodsg76@gmail.com"]
+	},
+	Message: 
+    {
+        Body: 
+	    {
+		    Text: 
+        	{
+		    Data:"OTP : " + otpToSend
+        	}
+        },
+        Subject: 
+    	{
+    	Data: "Email from Lab Assistant!!!"
+    	}
+    },
+    Source: "vinodsg76@gmail.com"
+};
+
+console.log('===SENDING EMAIL===');
+
+var email = ses.sendEmail
+    (
+        eParams, function(err, data)
+        {
+            if(err) 
+            console.log(err);
+            else 
+            {
+                console.log("===EMAIL SENT===");
+        	}
+        }
+        
+    );
+
+}
+// --------------- Events -----------------------
+ 
+function dispatch(intentRequest, callback) 
+{
+    console.log('request received for userId=${intentRequest.userId}, intentName=${intentRequest.currentIntent.intentName}');
+    const sessionAttributes = intentRequest.sessionAttributes;
+    const slots = intentRequest.currentIntent.slots;
+    const reqAction = slots.action;
+    const inpStaffId = slots.staffID;
+    const inpTokenID = slots.tokenID;
+    const enterOTP = slots.inputOTP;
+    var ec2 = new AWS.EC2({region: 'us-east-1'});
+    var tokenNumber;
+
+    var params = 
+    {
+        TableName : "admin",
+        KeyConditionExpression: "#yr = :yyyy",
+        ExpressionAttributeNames:
+        {
+            "#yr": "staffId"
+        },
+        ExpressionAttributeValues: 
+        {
+            ":yyyy": inpStaffId
+        }
+    };
+
+    docClient.query
+    (
+        params, function(err, data) 
+        {
+            if (err) 
+                console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
+            else 
+            {
+                console.log("Query succeeded."+ data.Items.COUNT);
+                data.Items.forEach(function(item) 
+                {
+                    recCount++;
+                    tokenNumber = item.tokenNo;
+                    console.log(" -", item.staffId + ": " + item.tokenNo);
+                });
+                
+            }
+        }
+    );
+
+    console.log(" Total -", recCount);
+                
+    if(recCount < 1 )
+    {
+        console.log(" recount<1 -");
+        callback(elicitSlot(sessionAttributes, intentRequest.currentIntent.name, slots, 'staffID'));
+    }
+    else if(tokenNumber != inpTokenID)
+        callback(elicitSlot(sessionAttributes, intentRequest.currentIntent.name, slots, 'tokenID',buildMessage('Incorrect Token number')));
+    
+    
+    if(! enterOTP)
+    {
+        sessionOTP = Math.round(Math.random()*10000000,6);
+        sendEmail(sessionOTP);
+        callback(elicitSlot(sessionAttributes, intentRequest.currentIntent.name, slots, 'inputOTP',buildMessage('Please enter OTP')));
+    }
+    if(enterOTP != sessionOTP)
+        callback(elicitSlot(sessionAttributes, intentRequest.currentIntent.name, slots, 'inputOTP',buildMessage('Mismatch OTP')));
+
+// buildMessage('Sorry' +sessionOTP+enterOTP)
+
+    if(reqAction=="start")
+    {
+        ec2.startInstances(
+                            {InstanceIds : ['i-0fc2d8ff8d0b27b1e'] },
+                            function (err, data) 
+                             {
+                                if (err) console.log(err, err.stack); // an error occurred
+                                else console.log(data); // successful response
+                            });
+    }
+    else if(reqAction=="stop")
+    {
+     
+        ec2.stopInstances(
+                            {InstanceIds : ['i-0fc2d8ff8d0b27b1e'] },
+                            function (err, data) 
+                            {
+                                if (err) console.log(err, err.stack); // an error occurred
+                                else console.log(data); // successful response
+                            });
+   
+    }
+    
+    callback(close(sessionAttributes, 'Fulfilled',
+   {'contentType': 'PlainText', 'content': `Okay, I have ${reqAction}ed EC2 Server`}));
+
+}
+ 
+// --------------- Main handler -----------------------
+ 
+// Route the incoming request based on intent.
+// The JSON body of the request is provided in the event slot.
+exports.handler = (event, context, callback) => {
+    try {
+        dispatch(event,
+            (response) => {
+                callback(null, response);
+            });
+    } catch (err) {
+        callback(err);
+    }
+};
